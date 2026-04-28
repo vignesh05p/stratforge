@@ -1,0 +1,10 @@
+.env
+.env.*
+*.pem
+*.key
+*.crt
+node_modules/
+__pycache__/
+.DS_Store
+.vscode/
+.idea/
