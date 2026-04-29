@@ -1,205 +1,199 @@
-# StratForge Architecture
+# StratForge Trading Architecture
 
-## 1. Project Vision
+## 1. Executive Summary
 
-StratForge is a hybrid Python + Go quantitative research and execution simulation engine.
+StratForge is a production-grade, hybrid quantitative research and execution simulation engine. It leverages the strengths of **Python** for data science, machine learning, and strategy logic, and **Go** for high-performance, low-latency concurrent systems, market data processing, and execution simulation.
 
-Its purpose is to help developers and researchers test trading ideas before risking real money. The system takes historical market data, applies trading strategies, simulates order execution, tracks portfolio performance, and generates useful performance metrics.
-
-This is not a simple CRUD app. This project is designed as a backend-heavy financial engineering system.
+The platform is designed to provide a seamless transition from backtesting to live paper-trading (and eventually live execution) with minimal code changes, ensuring that simulated results accurately reflect real-world execution conditions.
 
 ---
 
-## 2. Core Problem
+## 2. High-Level Design (HLD)
 
-Before deploying any trading strategy, we need to answer:
+### 2.1 System Context & Actors
 
-- Would this strategy have worked historically?
-- How risky is the strategy?
-- How much capital drawdown can happen?
-- How often does the strategy win or lose?
-- Is the strategy better than simply holding the asset?
+The system operates across three primary phases: **Research & Backtesting**, **Paper Trading**, and **Live Execution**.
 
-StratForge solves this by providing a robust backtesting and research pipeline with highly reliable execution simulation.
+*   **Quantitative Researcher (Actor):** Uses Jupyter Notebooks and the Python SDK to design, backtest, and optimize strategies.
+*   **Data Providers (External):** Sources of historical and real-time market data (e.g., Binance, Alpaca, Polygon).
+*   **Brokers / Exchanges (External):** Venues for order execution.
+
+### 2.2 Container Architecture (C4 Level 2)
+
+```mermaid
+graph TD
+    subgraph Python Ecosystem
+        A[Strategy Engine]
+        B[Metrics & Analytics]
+        C[Jupyter / Research]
+    end
+
+    subgraph Go Infrastructure
+        D[Data Ingestion Service]
+        E[Execution Engine]
+        F[Risk Management Layer]
+        G[Order Router]
+    end
+
+    subgraph Storage & Middleware
+        H[(TimescaleDB / PostgreSQL)]
+        I((Redis Pub/Sub & Cache))
+        J((Kafka / Redpanda))
+    end
+
+    A <-->|gRPC / REST| E
+    D -->|Kafka/Redis| A
+    E -->|Write| H
+    D -->|Write| H
+    B -->|Read| H
+    C --> A
+    E --> F
+    F --> G
+```
+
+### 2.3 Inter-Process Communication (IPC)
+
+Given the polyglot nature of StratForge, robust IPC is critical:
+
+*   **Real-time Streaming:** Market data ticks and order book updates are streamed from Go to Python via **Redis Pub/Sub** (for low-latency, transient data) or **Kafka** (for guaranteed delivery and replayability).
+*   **Command & Control:** Python sends trade signals (e.g., BUY/SELL) to the Go Execution Engine via **gRPC**. gRPC provides strict schema validation (Protobuf) and low-latency RPC.
+*   **State Sync:** Order status updates (e.g., PENDING -> FILLED) are pushed back to Python via callbacks or Redis event streams.
+
+### 2.4 Fault Tolerance & Reliability
+
+*   **Stateless Services:** The Go Execution Engine and Risk Manager are designed as stateless services (relying on Redis for distributed locking/state) to allow horizontal scaling.
+*   **Idempotent Order Handling:** All order requests carry unique idempotency keys to prevent duplicate executions during network partitions.
+*   **Circuit Breakers:** The Risk Management Layer implements circuit breakers (e.g., halting trading if max drawdown is breached or if exchange latency exceeds thresholds).
 
 ---
 
-## 3. Hybrid Architecture
+## 3. Low-Level Design (LLD)
 
-We use a language-specific approach where each layer plays to its strengths.
+### 3.1 Data Models & Schemas
 
-### Python = Quant Research Layer
-**Components:**
-- Strategy logic
-- Backtesting
-- Metrics engine
-- Data analysis & reports
-- Jupyter Notebooks
+Data persistence uses **TimescaleDB** (PostgreSQL extension optimized for time-series data).
 
-**Why Python?**
-- Ecosystem: `pandas`, `numpy`, `scipy`, `matplotlib`
-- Speed of research and iteration
-- Standard language for quant finance and machine learning
+*   **Market Data (Candles/Ticks):**
+    ```sql
+    CREATE TABLE market_data (
+        time TIMESTAMPTZ NOT NULL,
+        symbol VARCHAR(20) NOT NULL,
+        open DOUBLE PRECISION,
+        high DOUBLE PRECISION,
+        low DOUBLE PRECISION,
+        close DOUBLE PRECISION,
+        volume DOUBLE PRECISION
+    );
+    SELECT create_hypertable('market_data', 'time');
+    ```
 
-### Go = Systems / Execution Layer
-**Components:**
-- Market data ingestion
-- Real-time tick streaming
-- Order execution simulator
-- API gateway
-- Concurrent workers
-- Latency-sensitive services
+*   **Order State Model:**
+    ```json
+    {
+      "order_id": "uuid",
+      "timestamp": "iso8601",
+      "symbol": "BTC/USD",
+      "side": "BUY",
+      "type": "LIMIT",
+      "quantity": 1.5,
+      "price": 65000.0,
+      "status": "FILLED" // PENDING, ACCEPTED, FILLED, REJECTED, CANCELED
+    }
+    ```
 
-**Why Go?**
-- Fast, predictable concurrency
-- Clean, standalone binaries
-- Strong backend systems signal
-- Better for high-performance infra and reliability
+### 3.2 State Machines
 
----
+The **Order State Machine** is strictly enforced within the Go Execution layer:
 
-## 4. High-Level System Flow
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: Python Sends Signal
+    PENDING --> REJECTED: Risk Check Failed
+    PENDING --> ACCEPTED: Risk Passed, Sent to Broker/Simulator
+    ACCEPTED --> FILLED: Price Matched
+    ACCEPTED --> PARTIALLY_FILLED: Partial Match
+    PARTIALLY_FILLED --> FILLED: Remaining Matched
+    ACCEPTED --> CANCELED: User Cancel / Timeout
+    FILLED --> [*]
+    CANCELED --> [*]
+    REJECTED --> [*]
+```
 
-```text
-Python Research Engine
-        ↓
-Generates strategy signals
-        ↓
-Go Execution Engine
-        ↓
-Simulates orders / streaming / risk checks
-        ↓
-Stores results
-        ↓
-Python Metrics Engine
+### 3.3 Core Interfaces (Go)
+
+```go
+// ExecutionEngine defines the core routing and execution logic
+type ExecutionEngine interface {
+    SubmitOrder(ctx context.Context, order models.Order) (models.OrderResponse, error)
+    CancelOrder(ctx context.Context, orderID string) error
+    GetOrderStatus(orderID string) (models.OrderStatus, error)
+}
+
+// RiskManager evaluates trades before execution
+type RiskManager interface {
+    EvaluateTrade(portfolio PortfolioState, order models.Order) error
+}
+
+// DataStreamer handles market data ingestion
+type DataStreamer interface {
+    Subscribe(symbols []string) (<-chan models.Tick, error)
+}
+```
+
+### 3.4 Concurrency Models (Go)
+
+The Go layer leverages goroutines and channels to achieve ultra-low latency:
+*   **Ingestion Workers:** Dedicated goroutines maintain persistent WebSocket connections to exchanges.
+*   **Matching Engine (Simulator):** Order matching uses highly optimized lock-free queues or buffered channels.
+*   **Worker Pools:** Risk checks and database writes are offloaded to bounded worker pools to prevent unbounded memory growth.
+
+### 3.5 Sequence Diagram: Order Execution Flow
+
+```mermaid
+sequenceDiagram
+    participant Python as Python Strategy
+    participant GoExec as Go Execution Engine
+    participant Risk as Risk Manager
+    participant DB as TimescaleDB / DB
+
+    Python->>GoExec: gRPC: SubmitOrder(Signal)
+    GoExec->>Risk: EvaluateTrade(Signal)
+    alt Risk Check Failed
+        Risk-->>GoExec: Error (Max Drawdown, etc.)
+        GoExec-->>Python: Order Rejected
+    else Risk Check Passed
+        Risk-->>GoExec: OK
+        GoExec->>GoExec: Simulate Match / Route to Broker
+        GoExec->>DB: Async Write (Order State: FILLED)
+        GoExec-->>Python: Order Filled (Execution Details)
+    end
 ```
 
 ---
 
-## 5. Main Components
+## 4. Technology Stack & Infrastructure
 
-### 5.1 Data Layer (Go + Python)
-- **Go** handles real-time market data ingestion and streaming, normalizing data and writing it to storage/queues.
-- **Python** loads historical CSV/DB data for backtesting using `pandas`.
+### 4.1 Core Stack
+*   **Research / Logic:** Python 3.11+, Pandas, NumPy, Scikit-Learn.
+*   **Systems / Execution:** Go 1.21+.
+*   **Database:** TimescaleDB (Time-series), PostgreSQL (Relational metadata).
+*   **Caching & State:** Redis (Order state cache, Pub/Sub).
+*   **Message Broker:** Kafka or Redpanda (Event streaming, ingestion pipeline).
+*   **RPC Framework:** gRPC / Protocol Buffers.
 
-### 5.2 Strategy Engine (Python)
-The Python engine evaluates trading logic against data and returns:
-```text
-BUY
-SELL
-HOLD
-```
+### 4.2 Deployment Architecture
 
-### 5.3 Execution Simulator (Go)
-Mimics real-world order execution efficiently:
-- Market/Limit orders
-- Brokerage fees & slippage simulation
-- Stop-loss and Take-profit orders
-
-### 5.4 Risk Management Layer (Go)
-Before an order executes, Go verifies:
-- Available capital
-- Maximum drawdown limits
-- Portfolio-level risk checks
-
-### 5.5 Portfolio Tracker & Metrics Engine (Python)
-Evaluates execution results:
-- Total Return & Win Rate
-- Max Drawdown
-- Sharpe Ratio
-- Generates equity curves and dashboards
+*   **Local Development:** `docker-compose.yml` defining TimescaleDB, Redis, and local instances of the Python and Go engines.
+*   **Production Deployment:** Kubernetes (K8s).
+    *   Stateless Go pods behind a LoadBalancer.
+    *   StatefulSets for databases.
+    *   Helm charts for configuration management.
 
 ---
 
-## 6. Suggested Folder Structure
+## 5. Extensibility & Plugin Systems
 
-```text
-stratforge/
-├── python-engine/
-│   ├── stratforge/
-│   │   ├── data/
-│   │   ├── strategies/
-│   │   ├── backtesting/
-│   │   ├── metrics/
-│   │   └── reports/
-│   ├── tests/
-│   └── requirements.txt
-│
-├── go-engine/
-│   ├── cmd/
-│   │   └── executor/
-│   ├── internal/
-│   │   ├── stream/
-│   │   ├── execution/
-│   │   ├── risk/
-│   │   └── models/
-│   └── go.mod
-│
-├── docs/
-│   └── ARCHITECTURE.md
-│
-├── README.md
-└── docker-compose.yml
-```
-
----
-
-## 7. Data Model
-
-### Candle / Tick
-```text
-timestamp, open, high, low, close, volume
-```
-
-### Signal
-```text
-timestamp, symbol, action: BUY | SELL | HOLD, price, reason
-```
-
-### Order
-```text
-timestamp, symbol, side: BUY | SELL, quantity, price, status
-```
-
-### Trade
-```text
-entry_time, exit_time, entry_price, exit_price, quantity, profit_loss, return_percentage
-```
-
----
-
-## 8. Development Roadmap & Engineering Priority
-
-### Strict Advice
-**Do Python first.**
-Build: CSV data loader → moving average strategy → backtest → metrics.
-Then add Go.
-If you start with Go first, you’ll waste time building infra before the trading logic exists. That is wrong engineering order.
-
-### Phase 1 — Python Core Engine
-* Create data loader
-* Add moving average strategy
-* Build backtesting loop
-* Generate basic metrics
-
-### Phase 2 — Go Execution Infra
-* Add Go execution engine
-* Connect Python signals to Go simulator
-* Track portfolio state in Go
-* Save executed trades for Python metrics
-
-### Phase 3 — Realism & Scale
-* Streaming data ingestion
-* Real-time risk checks
-* Slippage & brokerage models
-
----
-
-## 9. What Makes This Project Strong
-
-This project is valuable because it demonstrates:
-* financial domain understanding
-* polyglot backend architecture (Python + Go)
-* systems engineering (concurrency, streams, latency)
-* data processing & quantitative analysis
-* clean interface boundaries
+StratForge is built to be extensible:
+*   **Broker Plugins (Go):** Adding a new broker (e.g., Interactive Brokers, Binance) only requires implementing the `ExecutionEngine` Go interface.
+*   **Strategy Plugins (Python):** Strategies inherit from a base `Strategy` class, enforcing standard `on_tick()`, `on_bar()`, and `on_order_update()` lifecycle methods.
+*   **Metrics Plugins (Python):** Custom risk and performance metrics can be plugged into the reporting pipeline without altering the core backtest loop.
