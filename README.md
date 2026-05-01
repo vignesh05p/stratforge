@@ -1,164 +1,60 @@
-# StratForge
+# StratForge Labs
 
-StratForge combines Python-based quantitative research with Go-based execution infrastructure to test, simulate, and evaluate algorithmic trading strategies.
+**StratForge Labs** is an independent open-source learning project for **algorithmic trading research, backtesting, and (later) paper execution**. It is **not** affiliated with any commercial product, MetaTrader EA builder, broker, investment firm, or trading platform that uses a similar name.
 
-This project is built as a serious fintech/backend engineering project, not as a simple demo app.
-
----
-
-## Why StratForge?
-
-Trading strategies should not be trusted just because they sound logical.
-
-Before using any strategy in real markets, we need to test:
-
-- how it performed historically
-- how much risk it carried
-- how large the drawdowns were
-- how consistent the returns were
-- whether it beats a simple buy-and-hold approach
-
-StratForge provides a robust, dual-language system to answer these questions reliably and quickly.
+This repository targets a **serious portfolio narrative** for backend and full-stack roles in investment tech: clean APIs, persisted research artifacts, and inspectable backtests—not stock tips or retail “signals.”
 
 ---
 
-## Hybrid Architecture
+## What it does (MVP)
 
-StratForge uses the right tool for the right job:
+- Load historical **OHLCV** data (CSV and/or simple fetch) into **PostgreSQL**
+- Define **one** strategy type: **Moving Average Crossover**
+- Run a **Python** backtest (pandas/numpy) behind **FastAPI**
+- Persist **metrics**, **trades**, and **equity curve** points
+- Explore results in a **React + TypeScript + Vite + Tailwind + Recharts** UI
+- Run locally with **Docker Compose**
 
-- **Python (Quant Research Layer):** Handles strategy logic, backtesting, metrics, data analysis, reports, and notebooks. It leverages `pandas`, `numpy`, `scipy`, and `matplotlib` for unparalleled research speed.
-- **Go (Systems / Execution Layer):** Handles market data ingestion, real-time tick streaming, order execution simulation, API gateway, concurrent workers, and latency-sensitive services. It offers fast concurrency, clean binaries, and strong backend reliability.
+**Not in MVP:** real-money trading, broker integration, Go execution engine, Redis, WebSockets, multi-strategy frameworks, or heavy observability stacks. Those belong in **Phase 2** after the backtest path is solid.
 
-### System Flow
+---
+
+## Why backtests matter
+
+Strategies should not be trusted because they sound clever. Before any real deployment, research teams need to see **historical P/L**, **drawdowns**, **trade counts**, and **win rates** on transparent, reproducible runs. StratForge Labs is a small system for asking that question for a **simple, well-understood** rule on **your** loaded history.
+
+---
+
+## Architecture (MVP)
 
 ```text
-Python Research Engine
-        ↓
-Generates strategy signals
-        ↓
-Go Execution Engine
-        ↓
-Simulates orders / streaming / risk checks
-        ↓
-Stores results
-        ↓
-Python Metrics Engine
+React UI  →  FastAPI  →  PostgreSQL
+                ↓
+         stratforge_engine (Python package)
 ```
 
----
-
-## Development Roadmap & Philosophy
-
-**Strict Engineering Order:** We build the Python research logic first. 
-1. CSV Data Loader
-2. Moving Average Strategy
-3. Backtest Loop
-4. Metrics
-
-*Why?* If we start with Go first, we waste time building infrastructure before the core trading logic even exists. Once the Python core is proven, we wrap it in the highly concurrent Go execution layer.
+Full specification: **[detail.md](./detail.md)**. Contributor-oriented summary: **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**.
 
 ---
 
-## Core Features
+## Tech stack (MVP)
 
-- Historical market data loading
-- Strategy engine (Moving Average Crossover, RSI, Breakout)
-- Buy/Sell/Hold signal generation
-- Backtesting engine
-- Order execution simulation (Slippage, Fees, Fills)
-- Portfolio tracking
-- Trade history
-- Risk-adjusted performance metrics
-
----
-
-## Initial Strategy
-
-The first strategy planned for this project is the **Moving Average Crossover Strategy**.
-
-Logic:
-```text
-Short moving average crosses above long moving average → BUY
-Short moving average crosses below long moving average → SELL
-Otherwise → HOLD
-```
-
-This strategy is simple enough to implement first, but strong enough to build the full system pipeline.
-
----
-
-## Planned Tech Stack
-
-- **Python:** `pandas`, `numpy`, `scipy`, `matplotlib`, `pytest`
-- **Go:** `goroutines`, `channels`, standard library for high-performance infra
-- **Future:** FastAPI / gRPC, PostgreSQL, React, Docker, Prometheus, Grafana
-
----
-
-## Suggested Project Structure
-
-```text
-stratforge/
-├── python-engine/
-│   ├── stratforge/
-│   ├── tests/
-│   └── requirements.txt
-│
-├── go-engine/
-│   ├── cmd/
-│   ├── internal/
-│   └── go.mod
-│
-├── docs/
-│   └── ARCHITECTURE.md
-│
-├── README.md
-└── docker-compose.yml
-```
-
-*(See `docs/ARCHITECTURE.md` for the full detailed structure.)*
-
----
-
-## Example Output
-
-A completed backtest should produce output like:
-
-```text
-Initial Capital: ₹100000
-Final Capital: ₹118500
-Total Return: 18.5%
-Max Drawdown: 7.2%
-Win Rate: 56%
-Sharpe Ratio: 1.34
-Total Trades: 42
-```
-
----
-
-## What This Project Demonstrates
-
-This project demonstrates:
-* fintech domain interest
-* polyglot backend engineering (Python + Go)
-* high-performance systems thinking
-* data processing & analysis
-* clean architecture & separation of concerns
-* performance evaluation
+| Layer | Stack |
+|--------|--------|
+| Frontend | React, TypeScript, Tailwind CSS, Recharts, Vite |
+| Backend | FastAPI, Pydantic, SQLAlchemy or SQLModel, Alembic |
+| Engine | Python, pandas, numpy, pytest |
+| Database | PostgreSQL |
+| Local dev | Docker Compose |
 
 ---
 
 ## Status
 
-Project is in early development.
-
-Current goal:
-```text
-Build the first working backtesting pipeline in Python using the Moving Average Crossover strategy, before adding the Go execution engine.
-```
+Early development. Current focus: **Python backtest engine + schema + API + minimal UI** per the MVP roadmap in `detail.md`.
 
 ---
 
-## Important Note
+## Disclaimer
 
-This project is for learning and research purposes only. It does not provide financial advice and should not be used for live trading without proper risk controls, testing, and validation.
+This project is for **learning and research** only. It does not provide financial advice. Do not use it for live trading without independent validation, compliance, and risk controls.
